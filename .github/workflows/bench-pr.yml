@@ -76,6 +76,7 @@ jobs:
       matrix: ${{ steps.parse.outputs.matrix }}
       envs: ${{ steps.parse.outputs.envs }}
       config-summary: ${{ steps.parse.outputs.config-summary }}
+      parse-error: ${{ steps.parse.outputs.parse-error }}
     steps:
       - name: Validate SHAs
         env:
@@ -127,7 +128,9 @@ jobs:
             case "$tok" in
               all) matrix="[$ooc,$comp]" ;;
               ooc|compile|aiur|zisk|sp1|execute) ;;
-              *) echo "error: unknown token '$tok' in benchmark command" >&2; exit 2 ;;
+              *) echo "error: unknown token '$tok' in benchmark command" >&2
+                 echo "parse-error=unknown token '$tok' in benchmark command" >> "$GITHUB_OUTPUT"
+                 exit 2 ;;
             esac
           done
           {
@@ -274,24 +277,28 @@ jobs:
     steps:
       - name: Download comment body
         if: needs.assemble.result == 'success'
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: comment-body
-      - name: Compose failure body
-        if: needs.assemble.result != 'success'
+      # Any failed stage prepends a red-X header (quoting the parse error
+      # when that's the cause) to the report — or replaces it when
+      # assemble produced none.
+      - name: Note failures
+        if: contains(needs.*.result, 'failure') || needs.assemble.result != 'success'
+        env:
+          PARSE_ERROR: ${{ needs.build.outputs.parse-error }}
         run: |
           {
-            echo "## ❌ benchmark run failed"
+            echo "## ❌ benchmark run failed — [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            if [ -n "$PARSE_ERROR" ]; then
+              echo
+              echo "> $PARSE_ERROR"
+            fi
             echo
-            echo "| stage | result |"
-            echo "|---|---|"
-            echo "| build (incl. command parse) | ${{ needs.build.result }} |"
-            echo "| compile | ${{ needs.compile.result }} |"
-            echo "| benchmark | ${{ needs.benchmark.result }} |"
-            echo "| assemble | ${{ needs.assemble.result }} |"
-            echo
-            echo "[Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-          } > comment-body.md
+            if [ -f comment-body.md ]; then cat comment-body.md; fi
+          } > body-with-header.md
+          mv body-with-header.md comment-body.md
       # The real workflow posts via an App token; github.token suffices to
       # prove the inputs.pr plumbing on the fork.
       - name: Post comment
