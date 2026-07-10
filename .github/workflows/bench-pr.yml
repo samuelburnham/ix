@@ -258,6 +258,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      # Commenting on a PR via the issues API needs the PR scope too.
+      pull-requests: write
     steps:
       - name: Download comment body
         uses: actions/download-artifact@v4
