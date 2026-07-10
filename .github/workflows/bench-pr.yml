@@ -110,15 +110,28 @@ jobs:
           path: ~/.local/bin
           key: bench-bins-${{ inputs.head-sha }}
       # Stand-in for `ix bench ci parse` (env-delivered comment body, same
-      # output names the real parse emits).
+      # output names the real parse emits). Mimics the strict grammar:
+      # unknown command-line tokens are a hard error; `all` selects both
+      # fake cells, the default is ooc only.
       - name: Parse command
         id: parse
         env:
           COMMENT_BODY: ${{ inputs.comment-body }}
         run: |
           echo "parsing: $COMMENT_BODY"
+          line=$(printf '%s\n' "$COMMENT_BODY" | grep -m1 '^\s*!benchmark' || true)
+          ooc='{"backend":"ooc","env":"InitStd","mode":"execute","label":"ooc-InitStd-execute"}'
+          comp='{"backend":"compile","env":"InitStd","mode":"execute","label":"compile-InitStd-execute"}'
+          matrix="[$ooc]"
+          for tok in $(printf '%s' "$line" | sed 's/^\s*!benchmark//'); do
+            case "$tok" in
+              all) matrix="[$ooc,$comp]" ;;
+              ooc|compile|aiur|zisk|sp1|execute) ;;
+              *) echo "error: unknown token '$tok' in benchmark command" >&2; exit 2 ;;
+            esac
+          done
           {
-            echo 'matrix=[{"backend":"ooc","env":"InitStd","mode":"execute","label":"ooc-InitStd-execute"},{"backend":"compile","env":"InitStd","mode":"execute","label":"compile-InitStd-execute"}]'
+            echo "matrix=$matrix"
             echo 'envs=["InitStd"]'
             echo "config-summary=fake parse of: $COMMENT_BODY"
           } >> "$GITHUB_OUTPUT"
@@ -248,9 +261,11 @@ jobs:
           name: comment-body
           path: comment-body.md
 
+  # Posts the report on success, and a red-X diagnostic when any stage
+  # failed — a broken run must never end in silence on the PR.
   comment:
-    needs: assemble
-    if: always() && needs.assemble.result == 'success'
+    needs: [build, compile, benchmark, assemble]
+    if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -258,9 +273,25 @@ jobs:
       pull-requests: write
     steps:
       - name: Download comment body
+        if: needs.assemble.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: comment-body
+      - name: Compose failure body
+        if: needs.assemble.result != 'success'
+        run: |
+          {
+            echo "## ❌ benchmark run failed"
+            echo
+            echo "| stage | result |"
+            echo "|---|---|"
+            echo "| build (incl. command parse) | ${{ needs.build.result }} |"
+            echo "| compile | ${{ needs.compile.result }} |"
+            echo "| benchmark | ${{ needs.benchmark.result }} |"
+            echo "| assemble | ${{ needs.assemble.result }} |"
+            echo
+            echo "[Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } > comment-body.md
       # The real workflow posts via an App token; github.token suffices to
       # prove the inputs.pr plumbing on the fork.
       - name: Post comment
