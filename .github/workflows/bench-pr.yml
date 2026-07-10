@@ -39,15 +39,6 @@ permissions:
   issues: read
   pull-requests: read
 
-concurrency:
-  # The event name keeps the relay run and the benchmark run it dispatches
-  # in separate groups — sharing one, the freshly-queued child would wait
-  # on (or with cancel-in-progress, cancel) its own parent. No
-  # cancel-in-progress: two comments with different configs both run,
-  # serialized per PR. (GitHub keeps one running + one pending run per
-  # group; a third comment supersedes the pending one, newest wins.)
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.pr || github.event.issue.number }}
-
 jobs:
   dispatch:
     name: Relay !benchmark comment
